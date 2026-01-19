@@ -1,24 +1,24 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: candidate_news
-    volumes:
-      - dbdata:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d
+    ports: ["15432:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL","pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
 
   pgadmin:
     image: dpage/pgadmin4:8.13
     container_name: pgadmin
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -27,39 +27,42 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
       PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
       PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: "10"
+    ports: ["18000:80"]
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-    ports:
-      - "18000:80"   # OPTIONAL: remove if using Coolify proxy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost/misc/ping', timeout=2)"]
       interval: 10s
       timeout: 5s
       retries: 10
-    restart: unless-stopped
 
   mcp:
     build:
       context: ./mcp
       dockerfile: Dockerfile
+    # ✅ FIX: use python -m uvicorn (more reliable than `uvicorn ...`)
     command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
     environment:
       ENABLE_ML: "false"
       MODEL_PROVIDER: openai
       MODEL_ID: gpt-4o-mini
-      MODEL_API_KEY: ${OPENAI_API_KEY}
+      MODEL_API_KEY: ${OPENAI_API_KEY}   # set in your shell or .env
+    ports: ["5000:5000"]
+    restart: unless-stopped
+    # ✅ FIX: remove curl dependency (curl may not exist in the image)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
       interval: 10s
       timeout: 5s
       retries: 10
-    restart: unless-stopped
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # ✅ FIX: use python -m uvicorn (more reliable than `uvicorn ...`)
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["18080:8000"]
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -74,46 +77,46 @@ services:
       db:
         condition: service_healthy
       mcp:
-        condition: service_started
+        condition: service_started    # keep started until MCP health is fixed
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)"]
       interval: 5s
       timeout: 5s
-      retries: 12
-      start_period: 20s
-    restart: unless-stopped
+      retries: 20
+      start_period: 60s
 
   enricher:
     build: ./enricher
-    command: ["python", "-u", "main.py"]
+    command: python -u main.py
+    depends_on:
+      backend:
+        # ✅ FIX: don't block whole stack if backend healthcheck is still stabilizing
+        condition: service_started
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       BACKEND_URL: http://backend:8000
       MCP_URL: http://mcp:5000/mcp
       SERVICE_TOKEN: ${SERVICE_TOKEN:-service-token}
-    depends_on:
-      backend:
-        condition: service_healthy
     restart: unless-stopped
 
   streamlit_app:
     build: ./streamlit_app
     environment:
-      BACKEND_URL: http://backend:8000
+      BACKEND_URL: http://backend:8000   # container-to-container DNS
       API_URL: http://backend:8000
       TZ: Asia/Dhaka
     volumes:
       - ./data:/data
-    ports:
-      - "18501:8501"   # Expose ONLY this service
+    ports: ["18501:8501"]
     depends_on:
       backend:
-        condition: service_healthy
+        # ✅ FIX: don't block whole stack if backend healthcheck is still stabilizing
+        condition: service_started
     restart: unless-stopped
 
   loader:
     build: ./loader
-    command: ["python", "-u", "load_from_xlsx.py"]
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       CODEBOOK_XLSX: /data/Bangladesh_Election_Media_Monitoring_Codebook.xlsx
@@ -124,6 +127,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    command: ["python","-u","load_from_xlsx.py"]
 
 volumes:
   dbdata:
