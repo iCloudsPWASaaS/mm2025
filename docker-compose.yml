@@ -1,141 +1,99 @@
+version: "3.9"
+
 services:
   db:
     image: postgres:16
-    container_name: db
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: candidate_news
-    ports: ["15432:5432"]
-    healthcheck:
-      test: ["CMD-SHELL","pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
     volumes:
       - dbdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
-    networks:
-      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   pgadmin:
     image: dpage/pgadmin4:8.13
-    container_name: pgadmin
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
-      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
-      PGADMIN_CONFIG_CONSOLE_LOG_LEVEL: "10"
-    ports: ["18000:80"]
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    networks:
-      - app_network
+    ports:
+      - "18000:80"
+    restart: unless-stopped
 
   mcp:
-    build:
-      context: ./mcp
-      dockerfile: Dockerfile
-    container_name: mcp
-    command: ["sh", "-c", "sleep 5 && python -m uvicorn main:app --host 0.0.0.0 --port 5000"]
+    build: ./mcp
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 5000
     environment:
       ENABLE_ML: "false"
       MODEL_PROVIDER: openai
       MODEL_ID: gpt-4o-mini
       MODEL_API_KEY: ${OPENAI_API_KEY}
-    ports: ["5000:5000"]
     restart: unless-stopped
-    networks:
-      - app_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: backend
-    command: ["sh", "-c", "sleep 15 && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
-    ports: ["18080:8000"]
-    env_file:
-      - .env
+    build: ./backend
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
-      DB_DSN: "postgresql://postgres:postgres@db:5432/candidate_news"
-      DATABASE_URL: "postgresql://postgres:postgres@db:5432/candidate_news"
-      OPENAI_API_KEY: "${OPENAI_API_KEY}"
-      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-4o-mini}"
-      TZ: "Asia/Dhaka"
-      JWT_SECRET: "${JWT_SECRET:-dev-secret}"
-      JWT_EXPIRE_MINUTES: "${JWT_EXPIRE_MINUTES:-1440}"
-      DEFAULT_ADMIN_USER: "${DEFAULT_ADMIN_USER:-admin}"
-      DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-admin123}"
-      SERVICE_TOKEN: "${SERVICE_TOKEN:-service-token}"
-      MCP_URL: "http://mcp:5000/mcp"
-    depends_on:
-      db:
-        condition: service_healthy
-      mcp:
-        condition: service_started
+      DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
+      DEFAULT_ADMIN_USER: ${DEFAULT_ADMIN_USER:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-service-token}
+      TZ: Asia/Dhaka
+    ports:
+      - "18080:8000"
     restart: unless-stopped
-    networks:
-      - app_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   enricher:
     build: ./enricher
-    container_name: enricher
-    command: ["sh", "-c", "sleep 45 && python -u main.py"]
-    depends_on:
-      - backend
+    command: python -u main.py
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/candidate_news
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       BACKEND_URL: http://backend:8000
       MCP_URL: http://mcp:5000/mcp
       SERVICE_TOKEN: ${SERVICE_TOKEN:-service-token}
     restart: unless-stopped
-    networks:
-      - app_network
 
   streamlit_app:
     build: ./streamlit_app
-    container_name: streamlit_app
-    command: ["sh", "-c", "sleep 45 && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"]
     environment:
       BACKEND_URL: http://backend:8000
       API_URL: http://backend:8000
       TZ: Asia/Dhaka
-    volumes:
-      - ./data:/data
-    ports: ["18501:8501"]
-    depends_on:
-      - backend
+    ports:
+      - "18501:8501"
     restart: unless-stopped
-    networks:
-      - app_network
 
   loader:
     build: ./loader
-    container_name: loader
-    command: ["sh", "-c", "sleep 20 && python -u load_from_xlsx.py"]
+    command: python -u load_from_xlsx.py
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/candidate_news
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       CODEBOOK_XLSX: /data/Bangladesh_Election_Media_Monitoring_Codebook.xlsx
       NEWS_XLSX: /data/Prothom Alo 2024 Election News.xlsx
       TZ: Asia/Dhaka
     volumes:
       - ./data:/data
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - app_network
-
-networks:
-  app_network:
-    driver: bridge
+    restart: "no"
 
 volumes:
   dbdata:
