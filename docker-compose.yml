@@ -57,24 +57,22 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend
-    command: ["sh", "-c", "sleep 15 && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "sleep 15 && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports: ["18080:8000"]
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/candidate_news
-      DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
-      POSTGRES_HOST: db
-      POSTGRES_PORT: "5432"
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: candidate_news
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      TZ: Asia/Dhaka
-      JWT_SECRET: ${JWT_SECRET:-dev-secret}
-      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
-      DEFAULT_ADMIN_USER: ${DEFAULT_ADMIN_USER:-admin}
-      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
-      SERVICE_TOKEN: ${SERVICE_TOKEN:-service-token}
+      DB_DSN: "postgresql://postgres:postgres@db:5432/candidate_news"
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/candidate_news"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-4o-mini}"
+      TZ: "Asia/Dhaka"
+      JWT_SECRET: "${JWT_SECRET:-dev-secret}"
+      JWT_EXPIRE_MINUTES: "${JWT_EXPIRE_MINUTES:-1440}"
+      DEFAULT_ADMIN_USER: "${DEFAULT_ADMIN_USER:-admin}"
+      DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-admin123}"
+      SERVICE_TOKEN: "${SERVICE_TOKEN:-service-token}"
+      MCP_URL: "http://mcp:5000/mcp"
     depends_on:
       db:
         condition: service_healthy
