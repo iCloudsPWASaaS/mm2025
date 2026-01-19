@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    container_name: db
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: candidate_news
@@ -14,6 +15,8 @@ services:
       - dbdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
+    networks:
+      - app_network
 
   pgadmin:
     image: dpage/pgadmin4:8.13
@@ -30,11 +33,14 @@ services:
     ports: ["18000:80"]
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - app_network
 
   mcp:
     build:
       context: ./mcp
       dockerfile: Dockerfile
+    container_name: mcp
     command: ["sh", "-c", "sleep 5 && python -m uvicorn main:app --host 0.0.0.0 --port 5000"]
     environment:
       ENABLE_ML: "false"
@@ -43,11 +49,14 @@ services:
       MODEL_API_KEY: ${OPENAI_API_KEY}
     ports: ["5000:5000"]
     restart: unless-stopped
+    networks:
+      - app_network
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: backend
     command: ["sh", "-c", "sleep 15 && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports: ["18080:8000"]
     environment:
@@ -66,9 +75,12 @@ services:
       mcp:
         condition: service_started
     restart: unless-stopped
+    networks:
+      - app_network
 
   enricher:
     build: ./enricher
+    container_name: enricher
     command: ["sh", "-c", "sleep 45 && python -u main.py"]
     depends_on:
       - backend
@@ -78,9 +90,12 @@ services:
       MCP_URL: http://mcp:5000/mcp
       SERVICE_TOKEN: ${SERVICE_TOKEN:-service-token}
     restart: unless-stopped
+    networks:
+      - app_network
 
   streamlit_app:
     build: ./streamlit_app
+    container_name: streamlit_app
     command: ["sh", "-c", "sleep 45 && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"]
     environment:
       BACKEND_URL: http://backend:8000
@@ -92,9 +107,12 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - app_network
 
   loader:
     build: ./loader
+    container_name: loader
     command: ["sh", "-c", "sleep 20 && python -u load_from_xlsx.py"]
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
@@ -106,6 +124,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
 
 volumes:
   dbdata:
