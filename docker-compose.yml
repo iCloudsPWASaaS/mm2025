@@ -30,38 +30,25 @@ services:
     ports: ["18000:80"]
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost/misc/ping', timeout=2)"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   mcp:
     build:
       context: ./mcp
       dockerfile: Dockerfile
-    # ✅ FIX: use python -m uvicorn (more reliable than `uvicorn ...`)
-    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
+    command: ["sh", "-c", "sleep 5 && python -m uvicorn main:app --host 0.0.0.0 --port 5000"]
     environment:
       ENABLE_ML: "false"
       MODEL_PROVIDER: openai
       MODEL_ID: gpt-4o-mini
-      MODEL_API_KEY: ${OPENAI_API_KEY}   # set in your shell or .env
+      MODEL_API_KEY: ${OPENAI_API_KEY}
     ports: ["5000:5000"]
     restart: unless-stopped
-    # ✅ FIX: remove curl dependency (curl may not exist in the image)
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    # ✅ FIX: use python -m uvicorn (more reliable than `uvicorn ...`)
-    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["sh", "-c", "sleep 15 && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports: ["18080:8000"]
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
@@ -77,22 +64,14 @@ services:
       db:
         condition: service_healthy
       mcp:
-        condition: service_started    # keep started until MCP health is fixed
+        condition: service_started
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 60s
 
   enricher:
     build: ./enricher
-    command: python -u main.py
+    command: ["sh", "-c", "sleep 45 && python -u main.py"]
     depends_on:
-      backend:
-        # ✅ FIX: don't block whole stack if backend healthcheck is still stabilizing
-        condition: service_healthy
+      - backend
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       BACKEND_URL: http://backend:8000
@@ -102,21 +81,21 @@ services:
 
   streamlit_app:
     build: ./streamlit_app
+    command: ["sh", "-c", "sleep 45 && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"]
     environment:
-      BACKEND_URL: http://backend:8000   # container-to-container DNS
+      BACKEND_URL: http://backend:8000
       API_URL: http://backend:8000
       TZ: Asia/Dhaka
     volumes:
       - ./data:/data
     ports: ["18501:8501"]
     depends_on:
-      backend:
-        # ✅ FIX: don't block whole stack if backend healthcheck is still stabilizing
-        condition: service_healthy
+      - backend
     restart: unless-stopped
 
   loader:
     build: ./loader
+    command: ["sh", "-c", "sleep 20 && python -u load_from_xlsx.py"]
     environment:
       DB_DSN: postgresql://postgres:postgres@db:5432/candidate_news
       CODEBOOK_XLSX: /data/Bangladesh_Election_Media_Monitoring_Codebook.xlsx
@@ -127,7 +106,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["python","-u","load_from_xlsx.py"]
 
 volumes:
   dbdata:
